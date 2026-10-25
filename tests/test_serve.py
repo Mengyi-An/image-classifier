@@ -12,34 +12,28 @@ from src.serve import MAX_BATCH_FILES, MAX_UPLOAD_BYTES, app
 
 
 def create_dummy_model(model_path):
-    """Write a bare state_dict checkpoint to ``model_path``."""
     os.makedirs(os.path.dirname(model_path), exist_ok=True)
     m = ImageClassifier()
     torch.save(m.state_dict(), model_path)
     return str(model_path)
 
-
+# 造一张假图片。用 PIL 生成一张纯色的 32×32 图片，编码成 JPEG 字节。内容是什么无所谓，测试只关心接口能不能正常返回。
 def make_image_bytes(color: tuple = (128, 64, 32), size: tuple = (32, 32)) -> bytes:
     img = Image.new("RGB", size, color=color)
     buf = io.BytesIO()
     img.save(buf, format="JPEG")
     return buf.getvalue()
 
-
+# 测试客户端。不理解这里？？？
 @pytest.fixture(scope="module")
 def client(tmp_path_factory):
-    """A TestClient serving a throwaway checkpoint written under tmp_path.
-
-    ``MODEL_PATH`` is redirected so the suite never writes ``data/model.pt``
-    into the repository.
-    """
     model_path = create_dummy_model(tmp_path_factory.mktemp("model") / "model.pt")
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(serve_module, "MODEL_PATH", model_path)
         with TestClient(app) as c:
             yield c
 
-
+# 以下为各个测试用例
 def test_root(client):
     response = client.get("/")
     assert response.status_code == 200

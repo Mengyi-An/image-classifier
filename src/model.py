@@ -14,10 +14,14 @@ Architecture:
 import torch
 from torch import nn
 
-# Preprocessing contract, shared by training and serving so the two transform
-# pipelines cannot drift apart. CIFAR-10 channel statistics, 32x32 inputs.
+
+# image size
 IMAGE_SIZE = (32, 32)
+
+# 三个 channels RGB的均值
 NORM_MEAN = (0.4914, 0.4822, 0.4465)
+
+# 三个通道的标准差
 NORM_STD = (0.2470, 0.2435, 0.2616)
 
 
@@ -26,12 +30,12 @@ class ConvBlock(nn.Module):
         super().__init__()
         self.block = nn.Sequential(
             nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1),
-            nn.BatchNorm2d(out_channels),
+            nn.BatchNorm2d(out_channels), # 让每一层的输入分布更稳定，训练更快
             nn.ReLU(inplace=True),
             nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1),
             nn.BatchNorm2d(out_channels),
             nn.ReLU(inplace=True),
-            nn.MaxPool2d(2),
+            nn.MaxPool2d(2), # 缩小特征图，减少后面的计算量
             nn.Dropout2d(dropout),
         )
 
@@ -51,7 +55,10 @@ class ImageClassifier(nn.Module):
             ConvBlock(64, 128),
         )
         self.classifier = nn.Sequential(
+            # 把 feature map拉成一个向量
             nn.Flatten(),
+
+            # 降维
             nn.Linear(128 * 4 * 4, 512),
             nn.ReLU(inplace=True),
             nn.Dropout(dropout),
