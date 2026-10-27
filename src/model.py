@@ -44,6 +44,8 @@ class ConvBlock(nn.Module):
 
 
 class ImageClassifier(nn.Module):
+
+    # CIFAR10 数据集中共 10 个类别，0-9 分别表示这 10 个类别
     CLASSES = ["airplane", "automobile", "bird", "cat", "deer",
                "dog", "frog", "horse", "ship", "truck"]
 
@@ -54,6 +56,8 @@ class ImageClassifier(nn.Module):
             ConvBlock(32, 64),
             ConvBlock(64, 128),
         )
+
+        # 这部分就是所谓的 fully connected
         self.classifier = nn.Sequential(
             # 把 feature map拉成一个向量
             nn.Flatten(),
@@ -62,7 +66,7 @@ class ImageClassifier(nn.Module):
             nn.Linear(128 * 4 * 4, 512),
             nn.ReLU(inplace=True),
             nn.Dropout(dropout),
-            nn.Linear(512, num_classes),
+            nn.Linear(512, num_classes), # 模型的最终结果是未经过 normalize 的数据，而不是 proba
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:

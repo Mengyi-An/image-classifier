@@ -89,6 +89,10 @@ def get_dataloaders(batch_size: int, data_dir: str):
     test_set = datasets.CIFAR10(data_dir, train=False, download=True, transform=test_transform)
 
     # DataLoader 把数据集切成一批一批地送给模型。训练集 shuffle=True，每个 epoch 打乱顺序，测试集不打乱。num_workers=2 是用两个子进程并行读数据。
+    # dataloader是一个迭代器，每次迭代的时候返回的是包含 2 的元素的序列[images, labels]
+
+    # 27.10。2026，最开始我不理解这里，前面我们已经得到了 train_set和 test_set，为什么还要再使用 dataloader？
+    # 因为train_set 是一个 Dataset，一次只能取一张图，没办法批量取图，并且可以把 batch的图转换成 tensor
     train_loader = torch.utils.data.DataLoader(
         train_set, batch_size=batch_size, shuffle=True, num_workers=2
     )
@@ -116,9 +120,19 @@ def evaluate(model: nn.Module, loader, criterion):
     with torch.no_grad():
         for images, labels in loader:
             images, labels = images.to(DEVICE), labels.to(DEVICE)
-            outputs = model(images)
+
+            # output 指的是 model对这批images预测的类别，这里只做了 forward
+            outputs = model(images) 
+
+            # 这里.item()是为了转换数据类型，把 tensor 转换成普通数字, 为了节省内存，计算 tensor 需要占用 gpu
+            # 这里的 criterion 返回的是每一张图的平均loss，而不是总的 loss
             total_loss += criterion(outputs, labels).item() * len(labels)
+
+            # 这里计算的是这一个 batch 预测对了几张图
+            # outputs.argmax(1)指的是取每一行中最大的值的索引，然后判断是否和 label 一致，true 是为 1
             correct += (outputs.argmax(1) == labels).sum().item()
+            
+            # 计算的是总图片数
             total += len(labels)
         
     # 返回平均损失和准确率
@@ -182,7 +196,9 @@ def train(
         
         # # 调用 imageclassifier类，然后放到设备上用 gpu/cpu跑
         model = ImageClassifier().to(DEVICE) 
-        criterion = nn.CrossEntropyLoss()
+
+        # 注意这里 criterion 返回的是每一张图的平均loss，而不是总的 loss
+        criterion = nn.CrossEntropyLoss() 
 
         # optimizer负责 gradient 更新权重。model.parameters() 告诉它要更新哪些权重，weight_decay 是防过拟合的正则项。
         optimizer = Adam(model.parameters(), lr=lr, weight_decay=1e-4)
@@ -191,6 +207,9 @@ def train(
         best_acc = 0.0
         for epoch in range(1, epochs + 1):
             model.train()
+            total_loss = 0
+            total_acc = 0
+            total = 0 # 指的是已经处理过的图片张数
 
             # 每一个 batch 结束后更新参数，第二个 batch 基于第一个 batch 更新参数
             # 每一个 batch 计算的时候都要清空上一步的梯度
@@ -202,21 +221,43 @@ def train(
                 # backward 反向传播，算出每个参数的梯度
                 # step 用梯度更新参数
                 optimizer.zero_grad()
-                loss = criterion(model(images), labels)
+                outputs = model(images)
+                loss = criterion(outputs, labels)
 
                 # backward 反向传播，算出每个参数的梯度
                 loss.backward()
 
                 # step 用梯度更新参数
                 optimizer.step()
+
+                # 计算 training loss 和 acc
+                total_loss += loss.item() * len(labels)
+                total_acc += (outputs.argmax(1) == labels).sum().item()
+                total += len(labels)
+            
+            train_loss = total_loss / total
+            train_acc = total_acc / total
+
             scheduler.step() # 每个 epoch 结束后更新一次学习率
 
+
             val_loss, val_acc = evaluate(model, test_loader, criterion)
-
             # 记录每一个 epoch 的 validation loss 和 accuracy，step=epoch 表示这是第几个 epoch
-            mlflow.log_metrics({"val_loss": val_loss, "val_acc": val_acc}, step=epoch)
-            print(f"Epoch {epoch}/{epochs}  loss={val_loss:.4f}  acc={val_acc:.4f}")
+            mlflow.log_metrics(
+                {
+                    "train_loss": train_loss,
+                    "train_acc": train_acc,
+                    "val_loss": val_loss, 
+                    "val_acc": val_acc,
+                },
+                step=epoch
+            )
 
+            print(f"Epoch {epoch}/{epochs}  "
+                  f"train_loss={train_loss:.4f}  train_acc={train_acc:.4f}  "
+                  f"val_loss={val_loss:.4f}  val_acc={val_acc:.4f}")
+
+        
             if val_acc > best_acc:
                 best_acc = val_acc
                 save_checkpoint(
