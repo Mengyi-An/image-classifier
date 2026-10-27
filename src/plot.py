@@ -18,7 +18,7 @@ val_acc = [m.value for m in client.get_metric_history(run_id, "val_acc")]
 
 train_loss = [m.value for m in client.get_metric_history(run_id, "train_loss")]
 train_acc = [m.value for m in client.get_metric_history(run_id, "train_acc")]
-epochs = range(1, len(loss) + 1)
+epochs = range(1, len(val_loss) + 1)
 
 
 plt.figure(figsize=(10, 4))
