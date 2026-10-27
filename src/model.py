@@ -49,12 +49,15 @@ class ImageClassifier(nn.Module):
     CLASSES = ["airplane", "automobile", "bird", "cat", "deer",
                "dog", "frog", "horse", "ship", "truck"]
 
-    def __init__(self, num_classes: int = 10, dropout: float = 0.5):
+    # dropout 是全连接层的丢弃率，conv_dropout 是每个卷积块末尾的丢弃率。
+    # 两个都设成 0 就是"不用 dropout"（消融实验用）。dropout 层没有参数，
+    # 所以不管设成多少，保存的权重结构都一样，serve.py 用默认值加载也没问题
+    def __init__(self, num_classes: int = 10, dropout: float = 0.5, conv_dropout: float = 0.25):
         super().__init__()
         self.features = nn.Sequential(
-            ConvBlock(3, 32),
-            ConvBlock(32, 64),
-            ConvBlock(64, 128),
+            ConvBlock(3, 32, conv_dropout),
+            ConvBlock(32, 64, conv_dropout),
+            ConvBlock(64, 128, conv_dropout),
         )
 
         # 这部分就是所谓的 fully connected

@@ -8,10 +8,17 @@ stored inside the checkpoint, and cuDNN runs in deterministic mode unless
 --no-deterministic is passed.
 这份文件是训练入口脚本：下载 CIFAR-10 → 增强 → 训练 CNN → 每轮评估 → 记录到 MLflow → 保存最佳模型。下面按"从上到下"逐段拆解。
 
+The 50k training images are split into 45k train / 5k validation (fixed split).
+The best epoch is picked on validation; the test set is used exactly once at the end.
+
 Usage:
-    python src/train.py
-    python src/train.py --epochs 20 --lr 0.001 --batch-size 64
-    python src/train.py --seed 7 --no-deterministic
+    python -m src.train
+    python -m src.train --epochs 20 --lr 0.001 --batch-size 64
+    python -m src.train --seed 7 --no-deterministic
+
+Ablation runs (checkpoints go to data/ablation/<run name>/, data/model.pt is untouched):
+    python -m src.train --no-augment
+    python -m src.train --no-dropout
 """
 
 import argparse
@@ -25,6 +32,7 @@ import torch
 from torch import nn
 from torch.optim import Adam
 from torch.optim.lr_scheduler import CosineAnnealingLR
+from torch.utils.data import DataLoader, Subset
 from torchvision import datasets, transforms
 
 # 导入 model.py里面封装好的类和三个常量
@@ -40,6 +48,33 @@ MODEL_PATH = os.path.join(DATA_DIR, "model.pt")
 METRICS_PATH = os.path.join(DATA_DIR, "metrics.json")
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 DEFAULT_SEED = 42
+
+# 从 5 万张训练图里切出 5000 张当验证集。切分用单独的固定种子，
+# 这样换训练种子、做消融实验时，所有 run 用的都是同一份验证集，结果才能直接比较
+VAL_SIZE = 5000
+SPLIT_SEED = 0
+
+# Compose 本身不是数据增强，它只是一个容器，把多个预处理操作按顺序串起来
+TRAIN_TRANSFORM = transforms.Compose([
+
+    # 先在四周补 4 个像素的边到 40*40，再随机裁出 32×32，等价于随机平移 ±4 像素
+    transforms.RandomCrop(IMAGE_SIZE[0], padding=4),
+
+    # 随机水平翻转，CIFAR-10 的类别（飞机、马、卡车…）水平镜像后语义不变，但是数据量增大。
+    transforms.RandomHorizontalFlip(),
+
+    # 把图像转换为张量并进行标准化
+    transforms.ToTensor(),
+
+    # 用均值和标准差进行标准化，让输入分布更适合训练
+    transforms.Normalize(NORM_MEAN, NORM_STD),
+])
+
+# 评估用（验证集、测试集），只做张量和标准化，不做增强
+EVAL_TRANSFORM = transforms.Compose([
+    transforms.ToTensor(),
+    transforms.Normalize(NORM_MEAN, NORM_STD),
+])
 
 
 def set_seed(seed: int, deterministic: bool = True) -> None:
@@ -59,50 +94,46 @@ def set_seed(seed: int, deterministic: bool = True) -> None:
 
 
 # Data augmentation (这里注意 augmentation 是取数据的时候才做)
-# prepared the training set and test set
-def get_dataloaders(batch_size: int, data_dir: str):
-
-    # Compose 本身不是数据增强，它只是一个容器，把多个预处理操作按顺序串起来
-    train_transform = transforms.Compose([
-
-        # 先在四周补 4 个像素的边到 40*40，再随机裁出 32×32，等价于随机平移 ±4 像素
-        transforms.RandomCrop(IMAGE_SIZE[0], padding=4),
-
-        # 随机水平翻转，CIFAR-10 的类别（飞机、马、卡车…）水平镜像后语义不变，但是数据量增大。
-        transforms.RandomHorizontalFlip(),
-
-        # 把图像转换为张量并进行标准化
-        transforms.ToTensor(),
-
-        # 用均值和标准差进行标准化，让输入分布更适合训练
-        transforms.Normalize(NORM_MEAN, NORM_STD),
-    ])
-
-    # 对测试集做张量和标准化
-    test_transform = transforms.Compose([
-        transforms.ToTensor(),
-        transforms.Normalize(NORM_MEAN, NORM_STD),
-    ])
+# prepared the training, validation and test sets
+# augment=False 时训练集也不做增强（消融实验用）
+def get_dataloaders(batch_size: int, data_dir: str, augment: bool = True):
+    train_transform = TRAIN_TRANSFORM if augment else EVAL_TRANSFORM
 
     # train=True 取 5 万张训练图，train=False 取 1 万张测试图。download=True 表示本地没有就自动下载，这就是 CIFAR-10 自动下载的出处
-    train_set = datasets.CIFAR10(data_dir, train=True, download=True, transform=train_transform)
-    test_set = datasets.CIFAR10(data_dir, train=False, download=True, transform=test_transform)
+    # 同一份 5 万张训练图读两遍：一份带增强用来训练，一份不带增强用来评估
+    train_full = datasets.CIFAR10(data_dir, train=True, download=True, transform=train_transform)
+    clean_full = datasets.CIFAR10(data_dir, train=True, download=True, transform=EVAL_TRANSFORM)
+    test_set = datasets.CIFAR10(data_dir, train=False, download=True, transform=EVAL_TRANSFORM)
+
+    # 用固定种子打乱下标，前 5000 个当验证集，剩下 45000 个当训练集
+    generator = torch.Generator().manual_seed(SPLIT_SEED)
+    indices = torch.randperm(len(train_full), generator=generator).tolist()
+    val_idx, train_idx = indices[:VAL_SIZE], indices[VAL_SIZE:]
+
+    train_set = Subset(train_full, train_idx)
+    val_set = Subset(clean_full, val_idx)
+
+    # 训练时的 train_acc 是在增强 + dropout 打开的状态下算的，会偏低，不能直接和 val_acc 比。
+    # 所以另取 5000 张训练图，不做增强、用 eval 模式评估，它和 val_acc 的差值才是真正的过拟合程度
+    train_eval_set = Subset(clean_full, train_idx[:VAL_SIZE])
 
     # DataLoader 把数据集切成一批一批地送给模型。训练集 shuffle=True，每个 epoch 打乱顺序，测试集不打乱。num_workers=2 是用两个子进程并行读数据。
     # dataloader是一个迭代器，每次迭代的时候返回的是包含 2 的元素的序列[images, labels]
 
     # 27.10。2026，最开始我不理解这里，前面我们已经得到了 train_set和 test_set，为什么还要再使用 dataloader？
     # 因为train_set 是一个 Dataset，一次只能取一张图，没办法批量取图，并且可以把 batch的图转换成 tensor
-    train_loader = torch.utils.data.DataLoader(
-        train_set, batch_size=batch_size, shuffle=True, num_workers=2
+    def make_loader(dataset, shuffle: bool = False):
+        return DataLoader(dataset, batch_size=batch_size, shuffle=shuffle, num_workers=2)
+
+    return (
+        make_loader(train_set, shuffle=True),
+        make_loader(train_eval_set),
+        make_loader(val_set),
+        make_loader(test_set),
     )
-    test_loader = torch.utils.data.DataLoader(
-        test_set, batch_size=batch_size, shuffle=False, num_workers=2
-    )
-    return train_loader, test_loader
 
 
-# 每一个 epoch 结束后，都要评估一下模型在test上的表现，计算平均损失和准确率
+# 每一个 epoch 结束后，都要评估一下模型在验证集上的表现，计算平均损失和准确率
 def evaluate(model: nn.Module, loader, criterion):
 
     # model.eval() 切到评估模式
@@ -141,10 +172,11 @@ def evaluate(model: nn.Module, loader, criterion):
 
 
 # save_checkpoint 的作用是把训练出来的模型存到硬盘上，并且把它是怎么训练出来的、成绩如何，一起存进去
-def save_checkpoint(model: nn.Module, params: dict, seed: int, metrics: dict) -> None:
-
-    # MODEL_PATH 是 data/model.pt
-    os.makedirs(os.path.dirname(MODEL_PATH), exist_ok=True)
+# out_dir 默认是 data/，消融实验存到 data/ablation/<run 名>/，不会覆盖 serve.py 用的 data/model.pt
+def save_checkpoint(
+    model: nn.Module, params: dict, seed: int, metrics: dict, out_dir: str = DATA_DIR
+) -> None:
+    os.makedirs(out_dir, exist_ok=True)
 
     # 不只存权重，还把超参数、种子、指标和类别名一起打包存进同一个文件。
     # 这样以后拿到一个 model.pt，就知道它是怎么训练出来的、成绩如何。
@@ -156,11 +188,11 @@ def save_checkpoint(model: nn.Module, params: dict, seed: int, metrics: dict) ->
             "metrics": metrics,
             "classes": ImageClassifier.CLASSES, # 访问类属性
         },
-        MODEL_PATH,
+        os.path.join(out_dir, "model.pt"),
     )
 
     # 另外把参数、种子、指标写成人能直接读的 json 文件，indent=2 是缩进两格方便阅读
-    with open(METRICS_PATH, "w") as f:
+    with open(os.path.join(out_dir, "metrics.json"), "w") as f:
         json.dump({"params": params, "seed": seed, "metrics": metrics}, f, indent=2)
 
 
@@ -172,6 +204,11 @@ def train(
     batch_size: int,
     seed: int = DEFAULT_SEED,
     deterministic: bool = True,
+    *,
+    augment: bool = True,
+    dropout: bool = True,
+    run_name: str = "baseline",
+    out_dir: str = DATA_DIR,
 ):
     set_seed(seed, deterministic)
 
@@ -186,16 +223,24 @@ def train(
         "seed": seed,
         "deterministic": deterministic,
         "device": DEVICE,
+        "augment": augment,
+        "dropout": dropout,
+        "val_size": VAL_SIZE,
     }
 
-    # 每一个 mlflow的超参数都会被记录下来
-    with mlflow.start_run():
+    # 每一个 mlflow的超参数都会被记录下来。run_name 用来在 MLflow 里区分消融实验的各组
+    with mlflow.start_run(run_name=run_name):
         mlflow.log_params(params)
 
-        train_loader, test_loader = get_dataloaders(batch_size, data_dir)
-        
+        train_loader, train_eval_loader, val_loader, test_loader = get_dataloaders(
+            batch_size, data_dir, augment
+        )
+
         # # 调用 imageclassifier类，然后放到设备上用 gpu/cpu跑
-        model = ImageClassifier().to(DEVICE) 
+        if dropout:
+            model = ImageClassifier().to(DEVICE)
+        else:
+            model = ImageClassifier(dropout=0.0, conv_dropout=0.0).to(DEVICE)
 
         # 注意这里 criterion 返回的是每一张图的平均loss，而不是总的 loss
         criterion = nn.CrossEntropyLoss() 
@@ -241,23 +286,30 @@ def train(
             scheduler.step() # 每个 epoch 结束后更新一次学习率
 
 
-            val_loss, val_acc = evaluate(model, test_loader, criterion)
-            # 记录每一个 epoch 的 validation loss 和 accuracy，step=epoch 表示这是第几个 epoch
+            train_eval_loss, train_eval_acc = evaluate(model, train_eval_loader, criterion)
+            val_loss, val_acc = evaluate(model, val_loader, criterion)
+            # gap = 训练集准确率 - 验证集准确率，越大说明过拟合越严重
+            gap = train_eval_acc - val_acc
+
+            # 记录每一个 epoch 的指标，step=epoch 表示这是第几个 epoch
             mlflow.log_metrics(
                 {
                     "train_loss": train_loss,
                     "train_acc": train_acc,
-                    "val_loss": val_loss, 
+                    "train_eval_loss": train_eval_loss,
+                    "train_eval_acc": train_eval_acc,
+                    "val_loss": val_loss,
                     "val_acc": val_acc,
+                    "gap": gap,
                 },
                 step=epoch
             )
 
             print(f"Epoch {epoch}/{epochs}  "
-                  f"train_loss={train_loss:.4f}  train_acc={train_acc:.4f}  "
-                  f"val_loss={val_loss:.4f}  val_acc={val_acc:.4f}")
+                  f"train_loss={train_loss:.4f}  train_eval_acc={train_eval_acc:.4f}  "
+                  f"val_loss={val_loss:.4f}  val_acc={val_acc:.4f}  gap={gap:.4f}")
 
-        
+
             if val_acc > best_acc:
                 best_acc = val_acc
                 save_checkpoint(
@@ -265,11 +317,23 @@ def train(
                     params,
                     seed,
                     {"val_loss": val_loss, "val_acc": val_acc, "best_val_acc": best_acc,
-                     "epoch": epoch},
+                     "train_eval_acc": train_eval_acc, "gap": gap, "epoch": epoch},
+                    out_dir,
                 )
 
-        mlflow.log_metric("best_val_acc", best_acc)
-        print(f"Training complete. Best accuracy: {best_acc:.4f} (seed {seed})")
+        # 训练结束后，载入验证集上最好的那一轮，在测试集上只评估这一次，这个数字才是无偏的最终成绩
+        checkpoint = torch.load(
+            os.path.join(out_dir, "model.pt"), map_location=DEVICE, weights_only=True
+        )
+        model.load_state_dict(checkpoint["state_dict"])
+        test_loss, test_acc = evaluate(model, test_loader, criterion)
+
+        metrics = {**checkpoint["metrics"], "test_loss": test_loss, "test_acc": test_acc}
+        save_checkpoint(model, params, seed, metrics, out_dir)
+
+        mlflow.log_metrics({"best_val_acc": best_acc, "test_loss": test_loss, "test_acc": test_acc})
+        print(f"Training complete. Best val accuracy: {best_acc:.4f} "
+              f"(epoch {metrics['epoch']}), test accuracy: {test_acc:.4f} (seed {seed})")
 
 
 if __name__ == "__main__":
@@ -285,7 +349,33 @@ if __name__ == "__main__":
         help="Deterministic cuDNN kernels (default on). --no-deterministic trades "
              "reproducibility for speed.",
     )
+    parser.add_argument(
+        "--augment",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Random crop + horizontal flip on training images (default on).",
+    )
+    parser.add_argument(
+        "--dropout",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Dropout in conv blocks and classifier (default on).",
+    )
+    parser.add_argument("--run-name", help="MLflow run name (default: derived from the flags)")
+    parser.add_argument("--out-dir", help="Where to save model.pt and metrics.json")
 
     # 解析命令行，把参数传给 train 函数开始训练
     args = parser.parse_args()
-    train(args.epochs, args.lr, args.batch_size, args.seed, args.deterministic)
+
+    # 没指定 run 名时按开关自动起名：baseline / no_augment / no_dropout / no_augment_no_dropout
+    ablations = [name for name, on in [("no_augment", args.augment),
+                                       ("no_dropout", args.dropout)] if not on]
+    run_name = args.run_name or "_".join(ablations) or "baseline"
+
+    # baseline 存到 data/（serve.py 读的就是这里），其他组存到 data/ablation/<run 名>/
+    out_dir = args.out_dir or (
+        DATA_DIR if run_name == "baseline" else os.path.join(DATA_DIR, "ablation", run_name)
+    )
+
+    train(args.epochs, args.lr, args.batch_size, args.seed, args.deterministic,
+          augment=args.augment, dropout=args.dropout, run_name=run_name, out_dir=out_dir)
