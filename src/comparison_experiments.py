@@ -4,8 +4,8 @@ Compare ablation runs from MLflow on one figure and print a summary table.
 For each run name it takes the latest finished run with that name.
 
 Usage:
-    python -m src.plot_ablation
-    python -m src.plot_ablation --runs baseline no_augment no_dropout no_augment_no_dropout
+    python -m src.comparison_experiments
+    python -m src.comparison_experiments --runs baseline no_augment no_dropout no_augment_no_dropout
 """
 
 import argparse

@@ -16,7 +16,7 @@ Usage:
     python -m src.train --epochs 20 --lr 0.001 --batch-size 64
     python -m src.train --seed 7 --no-deterministic
 
-Ablation runs (checkpoints go to data/ablation/<run name>/, data/model.pt is untouched):
+Comparison runs:
     python -m src.train --no-augment
     python -m src.train --no-dropout
 """
@@ -70,7 +70,7 @@ TRAIN_TRANSFORM = transforms.Compose([
     transforms.Normalize(NORM_MEAN, NORM_STD),
 ])
 
-# 评估用（验证集、测试集），只做张量和标准化，不做增强
+# 这里针对 validation set和 test set，只做张量和标准化，不做增强
 EVAL_TRANSFORM = transforms.Compose([
     transforms.ToTensor(),
     transforms.Normalize(NORM_MEAN, NORM_STD),
@@ -80,14 +80,11 @@ EVAL_TRANSFORM = transforms.Compose([
 def set_seed(seed: int, deterministic: bool = True) -> None:
 
     # 训练里的随机来源有四处，Python 的随机、NumPy 的随机、PyTorch 在 CPU 上的随机，以及 PyTorch 在所有 GPU 上的随机
-    
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
 
-    # Deterministic cuDNN kernels cost some throughput but are what makes a
-    # published accuracy number reproducible on the same hardware.
     # 这两行仅对 gpu 生效
     torch.backends.cudnn.deterministic = deterministic
     torch.backends.cudnn.benchmark = not deterministic
@@ -106,15 +103,18 @@ def get_dataloaders(batch_size: int, data_dir: str, augment: bool = True):
     test_set = datasets.CIFAR10(data_dir, train=False, download=True, transform=EVAL_TRANSFORM)
 
     # 用固定种子打乱下标，前 5000 个当验证集，剩下 45000 个当训练集
-    generator = torch.Generator().manual_seed(SPLIT_SEED)
-    indices = torch.randperm(len(train_full), generator=generator).tolist()
+    generator = torch.Generator().manual_seed(SPLIT_SEED) # 新建一个专属的随机数生成器，可以理解为一个"骰子"，将数据集打乱
+
+    # random permutation（随机排列），把 0, 1, ..., n-1 这 n 个数随机打乱顺序。每个数恰好出现一次，不重复也不遗漏。
+    # .tolist()指的是把 tensor 转换成 list
+    indices = torch.randperm(len(train_full), generator=generator).tolist() 
     val_idx, train_idx = indices[:VAL_SIZE], indices[VAL_SIZE:]
 
     train_set = Subset(train_full, train_idx)
     val_set = Subset(clean_full, val_idx)
 
     # 训练时的 train_acc 是在增强 + dropout 打开的状态下算的，会偏低，不能直接和 val_acc 比。
-    # 所以另取 5000 张训练图，不做增强、用 eval 模式评估，它和 val_acc 的差值才是真正的过拟合程度
+    # 这里就是在做 augmentation 之前，把 training set 复制一份作为 clean set，然后从 clean set 里取数据，train_val_set大小和 val_set大小一致。
     train_eval_set = Subset(clean_full, train_idx[:VAL_SIZE])
 
     # DataLoader 把数据集切成一批一批地送给模型。训练集 shuffle=True，每个 epoch 打乱顺序，测试集不打乱。num_workers=2 是用两个子进程并行读数据。
@@ -126,6 +126,8 @@ def get_dataloaders(batch_size: int, data_dir: str, augment: bool = True):
         return DataLoader(dataset, batch_size=batch_size, shuffle=shuffle, num_workers=2)
 
     return (
+
+        # 这里 training set的 shuffle=true是因为数据集通常是按照类别排序的，比如前 5000 张都是飞机，接下来 5000 张都是汽车
         make_loader(train_set, shuffle=True),
         make_loader(train_eval_set),
         make_loader(val_set),
@@ -156,7 +158,9 @@ def evaluate(model: nn.Module, loader, criterion):
             outputs = model(images) 
 
             # 这里.item()是为了转换数据类型，把 tensor 转换成普通数字, 为了节省内存，计算 tensor 需要占用 gpu
-            # 这里的 criterion 返回的是每一张图的平均loss，而不是总的 loss
+            # 这里的 criterion 返回的是是 "这一个 batch 里所有图的平均 loss
+            # len(labels)就是这一个 batch中的图片的数量
+            # 最开始我想的是为什么这里不乘以 batch_size，但是通常最后一个 batch 通常不满
             total_loss += criterion(outputs, labels).item() * len(labels)
 
             # 这里计算的是这一个 batch 预测对了几张图
@@ -204,10 +208,10 @@ def train(
     batch_size: int,
     seed: int = DEFAULT_SEED,
     deterministic: bool = True,
-    *,
-    augment: bool = True,
-    dropout: bool = True,
-    run_name: str = "baseline",
+    *, # *的意思是：它后面的参数调用时必须写参数名，比如 augment=False
+    augment: bool = True, # 是否做数据增强
+    dropout: bool = True, # 是否 dropput
+    run_name: str = "baseline", # 每一次实验名称记录下来
     out_dir: str = DATA_DIR,
 ):
     set_seed(seed, deterministic)
@@ -236,13 +240,13 @@ def train(
             batch_size, data_dir, augment
         )
 
-        # # 调用 imageclassifier类，然后放到设备上用 gpu/cpu跑
+        # dropout = true / false
         if dropout:
             model = ImageClassifier().to(DEVICE)
         else:
             model = ImageClassifier(dropout=0.0, conv_dropout=0.0).to(DEVICE)
 
-        # 注意这里 criterion 返回的是每一张图的平均loss，而不是总的 loss
+        # 注意这里 criterion 返回的是当前 batch的平均loss，而不是总的 loss
         criterion = nn.CrossEntropyLoss() 
 
         # optimizer负责 gradient 更新权重。model.parameters() 告诉它要更新哪些权重，weight_decay 是防过拟合的正则项。
@@ -321,12 +325,15 @@ def train(
                     out_dir,
                 )
 
-        # 训练结束后，载入验证集上最好的那一轮，在测试集上只评估这一次，这个数字才是无偏的最终成绩
+        # 训练结束后，载入val_set上最好的那一轮，在test上只评估这一次，这个数字才是无偏的最终成绩
+        # 载入最好的模型 → 在测试集上评估 → 把测试成绩存回文件 → 记录并打印结果。
         checkpoint = torch.load(
             os.path.join(out_dir, "model.pt"), map_location=DEVICE, weights_only=True
         )
+
+        # 把最好的权重等参数放回模型，.load_state_dict()函数指的是把字典里的参数放回模型
         model.load_state_dict(checkpoint["state_dict"])
-        test_loss, test_acc = evaluate(model, test_loader, criterion)
+        test_loss, test_acc = evaluate(model, test_loader, criterion) # 然后用最好的模型跑 test set
 
         metrics = {**checkpoint["metrics"], "test_loss": test_loss, "test_acc": test_acc}
         save_checkpoint(model, params, seed, metrics, out_dir)
