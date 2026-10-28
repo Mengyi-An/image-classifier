@@ -18,11 +18,10 @@ from contextlib import asynccontextmanager
 import torch
 import torch.nn.functional as F
 from fastapi import FastAPI, File, HTTPException, Query, UploadFile
-from PIL import Image # 把字节解码成图片
+from PIL import Image  # 把字节解码成图片
 from torchvision import transforms
 
 from src.model import IMAGE_SIZE, NORM_MEAN, NORM_STD, ImageClassifier
-
 
 # 取已经训练好的模型，路径/data/model.pt
 MODEL_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "model.pt")

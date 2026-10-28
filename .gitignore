@@ -12,3 +12,5 @@ data/model.pt
 data/metrics.json
 .env
 data/ablation/
+mlflow.db
+.DS_Store

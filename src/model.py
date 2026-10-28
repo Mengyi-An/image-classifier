@@ -14,7 +14,6 @@ Architecture:
 import torch
 from torch import nn
 
-
 # image size
 IMAGE_SIZE = (32, 32)
 
