@@ -292,10 +292,9 @@ def train(
 
             train_eval_loss, train_eval_acc = evaluate(model, train_eval_loader, criterion)
             val_loss, val_acc = evaluate(model, val_loader, criterion)
-            # gap = 训练集准确率 - 验证集准确率，越大说明过拟合越严重
-            gap = train_eval_acc - val_acc
 
             # 记录每一个 epoch 的指标，step=epoch 表示这是第几个 epoch
+            # train_eval 和 val 之间的差距（过拟合程度）在 plot.py 里画图时直接看两条曲线
             mlflow.log_metrics(
                 {
                     "train_loss": train_loss,
@@ -304,14 +303,13 @@ def train(
                     "train_eval_acc": train_eval_acc,
                     "val_loss": val_loss,
                     "val_acc": val_acc,
-                    "gap": gap,
                 },
                 step=epoch
             )
 
             print(f"Epoch {epoch}/{epochs}  "
                   f"train_loss={train_loss:.4f}  train_eval_acc={train_eval_acc:.4f}  "
-                  f"val_loss={val_loss:.4f}  val_acc={val_acc:.4f}  gap={gap:.4f}")
+                  f"val_loss={val_loss:.4f}  val_acc={val_acc:.4f}")
 
 
             if val_acc > best_acc:
@@ -321,7 +319,7 @@ def train(
                     params,
                     seed,
                     {"val_loss": val_loss, "val_acc": val_acc, "best_val_acc": best_acc,
-                     "train_eval_acc": train_eval_acc, "gap": gap, "epoch": epoch},
+                     "train_eval_acc": train_eval_acc, "epoch": epoch},
                     out_dir,
                 )
 
