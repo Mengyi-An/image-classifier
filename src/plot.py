@@ -41,18 +41,14 @@ def find_run(client: MlflowClient, run_name: str):
     return found[0] if found else None
 
 
-#   train（虚线）：训练时边学边算的，增强和 dropout 开着，用来看训练有没有正常收敛
-#   train (eval mode)：训练集里 5000 张原图，eval 模式下算的，和 val 条件一致
-#   val：验证集
-# train (eval mode) 和 val 之间涂色的区域就是过拟合的程度。最后打印一个对比表格
+# 几组对比实验并排画：每一列是一组实验，第一行画 loss，第二行画 acc。
+# 每张子图两条线：train（训练时边学边算的）和 val（验证集），中间涂色的区域就是两者的差距。
+# 最后打印一个对比表格
 def plot_comparison(run_names: list[str]):
     client = MlflowClient()
-    metric_names = [
-        "train_loss", "train_eval_loss", "val_loss",
-        "train_acc", "train_eval_acc", "val_acc",
-    ]
+    metric_names = ["train_loss", "val_loss", "train_acc", "val_acc"]
 
-    # 第 1 步：先把每组的曲线都取出来。找不到的、或者是旧代码跑的（没有 train_eval 指标）就跳过
+    # 第 1 步：先把每组的曲线都取出来，找不到的就跳过
     experiments = []   # 每个元素是 (run 名, run, {指标名: 每个 epoch 的值})
     for run_name in run_names:
         run = find_run(client, run_name)
@@ -60,9 +56,6 @@ def plot_comparison(run_names: list[str]):
             print(f"No finished run named '{run_name}', skipping.")
             continue
         curves = {key: metric_values(client, run.info.run_id, key) for key in metric_names}
-        if not curves["train_eval_acc"]:
-            print(f"Run '{run_name}' has no train_eval metrics (old code?), skipping.")
-            continue
         experiments.append((run_name, run, curves))
 
     if not experiments:
@@ -83,26 +76,25 @@ def plot_comparison(run_names: list[str]):
         for row, metric in enumerate(["loss", "acc"]):
             ax = axes[row][col]
             train_curve = curves[f"train_{metric}"]
-            train_eval_curve = curves[f"train_eval_{metric}"]
             val_curve = curves[f"val_{metric}"]
 
-            # 虚线、颜色浅一点，表示它只是参考，不用来和 val 比较
-            ax.plot(epochs, train_curve, label="train", linestyle="--", alpha=0.6)
-            ax.plot(epochs, train_eval_curve, label="train (eval mode)")
+            ax.plot(epochs, train_curve, label="train")
             ax.plot(epochs, val_curve, label="val")
-            # train (eval mode) 和 val 之间涂上浅灰色，这块区域就是 gap，越宽说明过拟合越严重
-            ax.fill_between(epochs, train_eval_curve, val_curve, color="grey", alpha=0.2)
+            # train 和 val 之间涂上浅灰色，这块区域就是 gap
+            ax.fill_between(epochs, train_curve, val_curve, color="grey", alpha=0.2)
 
-        axes[0][col].set_title(run_name)
-        axes[1][col].set_xlabel("Epoch")
+        # 标题后面加上这一组的测试准确率；test_acc 只在训练结束时记录一次，run.data.metrics 里就是那个值
+        test_acc = run.data.metrics.get("test_acc", float("nan"))
+        axes[0][col].set_title(f"{run_name} (test_acc = {test_acc:.4f})", fontweight="bold")
+        axes[1][col].set_xlabel("Epoch", fontweight="bold")
 
     # 纵轴名称只写在最左边一列
-    axes[0][0].set_ylabel("Loss")
-    axes[1][0].set_ylabel("Accuracy")
-    # 每张子图的三条线都一样，所以整张图只放一个图例，放在最下面，不会挡住曲线
+    axes[0][0].set_ylabel("Loss", fontweight="bold")
+    axes[1][0].set_ylabel("Accuracy", fontweight="bold")
+    # 每张子图的两条线都一样，所以整张图只放一个图例，放在最下面，不会挡住曲线
     handles, labels = axes[0][0].get_legend_handles_labels()
-    figure.legend(handles, labels, loc="lower center", ncol=3, bbox_to_anchor=(0.5, -0.03))
-    figure.suptitle("Shaded area = gap between train (eval mode) and val = overfitting")
+    figure.legend(handles, labels, loc="lower center", ncol=2, bbox_to_anchor=(0.5, -0.03))
+    figure.suptitle("Train vs validation", fontweight="bold", fontsize=20)
 
     os.makedirs("figures", exist_ok=True)
     figure.savefig("figures/comparison.png", dpi=300, bbox_inches="tight")
@@ -110,14 +102,17 @@ def plot_comparison(run_names: list[str]):
 
     # 第 3 步：打印成 Markdown 表格，可以直接贴进 README
     # best_val_acc 和 test_acc 只在训练结束时记录一次，run.data.metrics 里就是那个值
-    # Final gap = 最后一个 epoch 的 train_eval_acc - val_acc
-    print("| Run | Best val acc | Test acc | Final gap |")
-    print("|---|---|---|---|")
+    # Best epoch = val_acc 最高的那一轮（训练轮数多了以后，用它看最佳模型出现在什么时候）
+    # Final gap = 最后一个 epoch 的 train_acc - val_acc
+    print("| Run | Best val acc | Best epoch | Test acc | Final gap |")
+    print("|---|---|---|---|---|")
     for run_name, run, curves in experiments:
         best_val_acc = run.data.metrics.get("best_val_acc", float("nan"))
+        best_epoch = curves["val_acc"].index(max(curves["val_acc"])) + 1
         test_acc = run.data.metrics.get("test_acc", float("nan"))
-        final_gap = curves["train_eval_acc"][-1] - curves["val_acc"][-1]
-        print(f"| {run_name} | {best_val_acc:.2%} | {test_acc:.2%} | {final_gap:.2%} |")
+        final_gap = curves["train_acc"][-1] - curves["val_acc"][-1]
+        print(f"| {run_name} | {best_val_acc:.2%} | {best_epoch} | {test_acc:.2%} "
+              f"| {final_gap:.2%} |")
 
 
 # 直接运行 python -m src.plot 时才画图；被别的文件 import 时不会自动执行
