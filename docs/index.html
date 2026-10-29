@@ -1,0 +1,278 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CIFAR-10 Image Classifier</title>
+  <meta name="description" content="A small PyTorch CNN that classifies images into 10 CIFAR-10 classes, running entirely in your browser with ONNX Runtime Web.">
+  <style>
+    :root {
+      --bg: #f6f7f9;
+      --card: #ffffff;
+      --text: #1d2330;
+      --muted: #5d6677;
+      --border: #e1e5ec;
+      --accent: #2f6fde;
+      --accent-soft: #e6eefc;
+      --bar-bg: #edf0f5;
+      --good: #1f8a4c;
+      --bad: #c2412d;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #12151b;
+        --card: #1b1f27;
+        --text: #e7eaf0;
+        --muted: #9aa3b2;
+        --border: #2c323d;
+        --accent: #6b9cf5;
+        --accent-soft: #23314d;
+        --bar-bg: #262b35;
+        --good: #4cc27f;
+        --bad: #f0745f;
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    }
+    main { max-width: 960px; margin: 0 auto; padding: 32px 16px 48px; }
+    header h1 { margin: 0 0 6px; font-size: 1.8rem; }
+    header p { margin: 0; color: var(--muted); }
+    .layout { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 24px; }
+    @media (max-width: 720px) { .layout { grid-template-columns: 1fr; } }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 20px;
+    }
+    .card h2 { margin: 0 0 12px; font-size: 1rem; }
+
+    /* 示例图片：原图只有 32×32，放大显示时保持像素清晰 */
+    /* minmax(0, 1fr)：每列严格等宽，不会被 "automobile" 这种长名字撑宽 */
+    .samples { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; }
+    .sample {
+      padding: 0;
+      border: 2px solid transparent;
+      border-radius: 8px;
+      background: none;
+      color: var(--muted);
+      font: inherit;
+      font-size: 0.75rem;
+      cursor: pointer;
+    }
+    .sample img { display: block; width: 100%; aspect-ratio: 1; border-radius: 6px; image-rendering: pixelated; }
+    .sample span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .sample.active { border-color: var(--accent); }
+    .sample:disabled { cursor: wait; opacity: 0.5; }
+
+    .dropzone {
+      display: block;
+      margin-top: 20px;
+      padding: 24px 16px;
+      border: 2px dashed var(--border);
+      border-radius: 10px;
+      text-align: center;
+      color: var(--muted);
+      cursor: pointer;
+    }
+    .dropzone.dragover { border-color: var(--accent); background: var(--accent-soft); }
+    .dropzone input { display: none; }
+    .dropzone strong { color: var(--accent); }
+
+    .preview {
+      display: grid;
+      place-items: center;
+      aspect-ratio: 1;
+      max-width: 220px;
+      margin: 0 auto 16px;
+      border-radius: 10px;
+      background: var(--bar-bg);
+      color: var(--muted);
+      overflow: hidden;
+    }
+    .preview img { width: 100%; height: 100%; object-fit: contain; image-rendering: pixelated; }
+    .verdict { text-align: center; margin-bottom: 16px; min-height: 3.2em; }
+    .verdict .label { font-size: 1.5rem; font-weight: 700; }
+    .verdict .truth { font-size: 0.9rem; color: var(--muted); }
+    .verdict .truth.good { color: var(--good); }
+    .verdict .truth.bad { color: var(--bad); }
+
+    .bar { display: grid; grid-template-columns: 90px 1fr 56px; align-items: center; gap: 10px; margin: 8px 0; }
+    .bar .track { height: 12px; border-radius: 6px; background: var(--bar-bg); overflow: hidden; }
+    .bar .fill { height: 100%; border-radius: 6px; background: var(--accent); transition: width 0.3s; }
+    .bar .pct { text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); }
+
+    .status { margin-top: 16px; color: var(--muted); font-size: 0.9rem; }
+    .status.error { color: var(--bad); }
+    footer { margin-top: 24px; color: var(--muted); font-size: 0.9rem; }
+    footer p { margin: 6px 0; }
+    a { color: var(--accent); }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>CIFAR-10 Image Classifier</h1>
+      <p>A small convolutional network trained in PyTorch, running entirely in your browser with ONNX Runtime Web.
+        <span id="accuracy"></span></p>
+    </header>
+
+    <div class="layout">
+      <section class="card">
+        <h2>Try an example from the test set</h2>
+        <div class="samples" id="samples"></div>
+
+        <label class="dropzone" id="dropzone">
+          <input type="file" id="file" accept="image/*">
+          <strong>Upload an image</strong> or drag it here
+        </label>
+        <p class="status" id="status">Loading model…</p>
+      </section>
+
+      <section class="card">
+        <h2>Prediction</h2>
+        <div class="preview" id="preview">No image yet</div>
+        <div class="verdict" id="verdict"></div>
+        <div id="bars"></div>
+      </section>
+    </div>
+
+    <footer>
+      <p>The model was trained on 32×32 CIFAR-10 images of 10 classes (airplane, automobile, bird, cat, deer, dog, frog, horse, ship, truck),
+        so it works best on small, centered pictures of those classes. High-resolution photos are shrunk to 32×32 and may be misclassified.</p>
+      <p>Your image never leaves your browser. Source code: <a href="https://github.com/Mengyi-An/image-classifier">github.com/Mengyi-An/image-classifier</a></p>
+    </footer>
+  </main>
+
+  <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.19.2/dist/ort.min.js"></script>
+  <script>
+    // onnxruntime-web 的 wasm 文件从同一个 CDN 地址加载
+    ort.env.wasm.wasmPaths = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.19.2/dist/";
+  </script>
+  <script src="app.js"></script>
+  <script>
+    const TOP_K = 3;
+    const els = {
+      samples: document.getElementById("samples"),
+      dropzone: document.getElementById("dropzone"),
+      file: document.getElementById("file"),
+      status: document.getElementById("status"),
+      preview: document.getElementById("preview"),
+      verdict: document.getElementById("verdict"),
+      bars: document.getElementById("bars"),
+      accuracy: document.getElementById("accuracy"),
+    };
+    let ready = false;
+
+    function setStatus(text, isError = false) {
+      els.status.textContent = text;
+      els.status.classList.toggle("error", isError);
+    }
+
+    function loadImage(src) {
+      return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = () => reject(new Error("Could not read this image."));
+        img.src = src;
+      });
+    }
+
+    // trueLabel 只有示例图片才有，用来显示模型这次是不是认对了
+    async function classify(src, trueLabel = null) {
+      if (!ready) return;
+      try {
+        const img = await loadImage(src);
+        els.preview.replaceChildren(img);
+        const ranked = await Classifier.predict(img);
+        showResult(ranked, trueLabel);
+        setStatus("");
+      } catch (err) {
+        setStatus(err.message, true);
+      }
+    }
+
+    function showResult(ranked, trueLabel) {
+      const top = ranked[0];
+      const label = document.createElement("div");
+      label.className = "label";
+      label.textContent = top.name;
+      els.verdict.replaceChildren(label);
+
+      if (trueLabel) {
+        const truth = document.createElement("div");
+        const correct = top.name === trueLabel;
+        truth.className = "truth " + (correct ? "good" : "bad");
+        truth.textContent = correct ? `Correct (true label: ${trueLabel})` : `Wrong (true label: ${trueLabel})`;
+        els.verdict.append(truth);
+      }
+
+      els.bars.replaceChildren(...ranked.slice(0, TOP_K).map(({ name, prob }) => {
+        const row = document.createElement("div");
+        row.className = "bar";
+        row.innerHTML = `<span></span><div class="track"><div class="fill"></div></div><span class="pct"></span>`;
+        row.children[0].textContent = name;
+        row.querySelector(".fill").style.width = `${(prob * 100).toFixed(1)}%`;
+        row.querySelector(".pct").textContent = `${(prob * 100).toFixed(1)}%`;
+        return row;
+      }));
+    }
+
+    function buildSamples(classes) {
+      for (const name of classes) {
+        const button = document.createElement("button");
+        button.className = "sample";
+        button.title = name;   // 手机上长名字会被截断，鼠标悬停时显示完整名字
+        button.disabled = true;
+        button.innerHTML = `<img alt=""><span></span>`;
+        button.querySelector("img").src = `samples/${name}.png`;
+        button.querySelector("img").alt = name;
+        button.querySelector("span").textContent = name;
+        button.addEventListener("click", () => {
+          document.querySelectorAll(".sample").forEach((b) => b.classList.remove("active"));
+          button.classList.add("active");
+          classify(`samples/${name}.png`, name);
+        });
+        els.samples.append(button);
+      }
+    }
+
+    function handleFile(file) {
+      if (!file) return;
+      if (!file.type.startsWith("image/")) {
+        setStatus("Please choose an image file.", true);
+        return;
+      }
+      document.querySelectorAll(".sample").forEach((b) => b.classList.remove("active"));
+      const url = URL.createObjectURL(file);
+      classify(url).finally(() => URL.revokeObjectURL(url));
+    }
+
+    els.file.addEventListener("change", () => handleFile(els.file.files[0]));
+    ["dragenter", "dragover"].forEach((type) => els.dropzone.addEventListener(type, (e) => {
+      e.preventDefault();
+      els.dropzone.classList.add("dragover");
+    }));
+    ["dragleave", "drop"].forEach((type) => els.dropzone.addEventListener(type, (e) => {
+      e.preventDefault();
+      els.dropzone.classList.remove("dragover");
+    }));
+    els.dropzone.addEventListener("drop", (e) => handleFile(e.dataTransfer.files[0]));
+
+    Classifier.load()
+      .then((meta) => {
+        buildSamples(meta.classes);
+        if (meta.test_acc) els.accuracy.textContent = `Test accuracy: ${(meta.test_acc * 100).toFixed(1)}%.`;
+        document.querySelectorAll(".sample").forEach((b) => (b.disabled = false));
+        ready = true;
+        setStatus("Model loaded. Pick an example or upload your own image.");
+      })
+      .catch((err) => setStatus(`Could not load the model: ${err.message}`, true));
+  </script>
+</body>
+</html>
