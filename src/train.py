@@ -42,10 +42,6 @@ from src.model import IMAGE_SIZE, NORM_MEAN, NORM_STD, ImageClassifier
 # 结果是仓库根目录下的 data 文件夹。
 DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data")
 
-# 把 data 目录的路径和文件名接在一起，得到类似 .../data/model.pt 的一段文字，存进变量 MODEL_PATH
-# 也就是找 data 目录下的 model.pt 和 metrics.json这两个文件
-MODEL_PATH = os.path.join(DATA_DIR, "model.pt")
-METRICS_PATH = os.path.join(DATA_DIR, "metrics.json")
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 DEFAULT_SEED = 42
 
@@ -97,7 +93,7 @@ def get_dataloaders(batch_size: int, data_dir: str, augment: bool = True):
     train_transform = TRAIN_TRANSFORM if augment else EVAL_TRANSFORM
 
     # train=True 取 5 万张训练图，train=False 取 1 万张测试图。download=True 表示本地没有就自动下载，这就是 CIFAR-10 自动下载的出处
-    # 同一份 5 万张训练图读两遍：一份带增强用来训练，一份不带增强用来评估
+    # 同一份 5 万张训练图读两遍：一份带增强用来训练，一份不带增强给验证集用
     train_full = datasets.CIFAR10(data_dir, train=True, download=True, transform=train_transform)
     clean_full = datasets.CIFAR10(data_dir, train=True, download=True, transform=EVAL_TRANSFORM)
     test_set = datasets.CIFAR10(data_dir, train=False, download=True, transform=EVAL_TRANSFORM)
@@ -113,10 +109,6 @@ def get_dataloaders(batch_size: int, data_dir: str, augment: bool = True):
     train_set = Subset(train_full, train_idx)
     val_set = Subset(clean_full, val_idx)
 
-    # 训练时的 train_acc 是在增强 + dropout 打开的状态下算的，会偏低，不能直接和 val_acc 比。
-    # 这里就是在做 augmentation 之前，把 training set 复制一份作为 clean set，然后从 clean set 里取数据，train_val_set大小和 val_set大小一致。
-    train_eval_set = Subset(clean_full, train_idx[:VAL_SIZE])
-
     # DataLoader 把数据集切成一批一批地送给模型。训练集 shuffle=True，每个 epoch 打乱顺序，测试集不打乱。num_workers=2 是用两个子进程并行读数据。
     # dataloader是一个迭代器，每次迭代的时候返回的是包含 2 的元素的序列[images, labels]
 
@@ -129,7 +121,6 @@ def get_dataloaders(batch_size: int, data_dir: str, augment: bool = True):
 
         # 这里 training set的 shuffle=true是因为数据集通常是按照类别排序的，比如前 5000 张都是飞机，接下来 5000 张都是汽车
         make_loader(train_set, shuffle=True),
-        make_loader(train_eval_set),
         make_loader(val_set),
         make_loader(test_set),
     )
@@ -236,7 +227,7 @@ def train(
     with mlflow.start_run(run_name=run_name):
         mlflow.log_params(params)
 
-        train_loader, train_eval_loader, val_loader, test_loader = get_dataloaders(
+        train_loader, val_loader, test_loader = get_dataloaders(
             batch_size, data_dir, augment
         )
 
@@ -290,17 +281,14 @@ def train(
             scheduler.step() # 每个 epoch 结束后更新一次学习率
 
 
-            train_eval_loss, train_eval_acc = evaluate(model, train_eval_loader, criterion)
             val_loss, val_acc = evaluate(model, val_loader, criterion)
 
             # 记录每一个 epoch 的指标，step=epoch 表示这是第几个 epoch
-            # train_eval 和 val 之间的差距（过拟合程度）在 plot.py 里画图时直接看两条曲线
+            # train 和 val 之间的差距（过拟合程度）在 plot.py 里画图时直接看两条曲线
             mlflow.log_metrics(
                 {
                     "train_loss": train_loss,
                     "train_acc": train_acc,
-                    "train_eval_loss": train_eval_loss,
-                    "train_eval_acc": train_eval_acc,
                     "val_loss": val_loss,
                     "val_acc": val_acc,
                 },
@@ -308,7 +296,7 @@ def train(
             )
 
             print(f"Epoch {epoch}/{epochs}  "
-                  f"train_loss={train_loss:.4f}  train_eval_acc={train_eval_acc:.4f}  "
+                  f"train_loss={train_loss:.4f}  train_acc={train_acc:.4f}  "
                   f"val_loss={val_loss:.4f}  val_acc={val_acc:.4f}")
 
 
@@ -319,7 +307,7 @@ def train(
                     params,
                     seed,
                     {"val_loss": val_loss, "val_acc": val_acc, "best_val_acc": best_acc,
-                     "train_eval_acc": train_eval_acc, "epoch": epoch},
+                     "train_acc": train_acc, "epoch": epoch},
                     out_dir,
                 )
 
@@ -343,7 +331,7 @@ def train(
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--epochs", type=int, default=30)
+    parser.add_argument("--epochs", type=int, default=100)
     parser.add_argument("--lr", type=float, default=0.001)
     parser.add_argument("--batch-size", type=int, default=128)
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED)

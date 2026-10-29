@@ -10,6 +10,4 @@
 
 ## plot.py: 所有的 plot 相关函数
 
-## confusion.py: 混淆矩阵相关函数
-
 ## serve.py: API 服务
