@@ -37,16 +37,13 @@ jobs:
   docker-build:
     runs-on: ubuntu-latest
     needs: test
-    permissions:
-      contents: read
-      packages: write
     steps:
       - uses: actions/checkout@v4
 
       - name: Build Docker image
         run: docker build -t image-classifier:${{ github.sha }} .
 
-      # The image is only worth pushing if it actually boots and serves.
+      # Check that the image actually boots and serves.
       # /health needs a checkpoint, so bake a randomly initialised one into a
       # throwaway layer on top of the built image (it already has torch).
       - name: Smoke test the image
@@ -70,19 +67,3 @@ jobs:
           echo
           echo "container is healthy"
           docker rm -f smoke
-
-      - name: Log in to GitHub Container Registry
-        if: github.event_name == 'push'
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Push image to GHCR
-        if: github.event_name == 'push'
-        run: |
-          docker tag image-classifier:${{ github.sha }} ghcr.io/yigitliman/image-classifier:latest
-          docker tag image-classifier:${{ github.sha }} ghcr.io/yigitliman/image-classifier:${{ github.sha }}
-          docker push ghcr.io/yigitliman/image-classifier:latest
-          docker push ghcr.io/yigitliman/image-classifier:${{ github.sha }}
