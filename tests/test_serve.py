@@ -17,14 +17,17 @@ def create_dummy_model(model_path):
     torch.save(m.state_dict(), model_path)
     return str(model_path)
 
-# 造一张假图片。用 PIL 生成一张纯色的 32×32 图片，编码成 JPEG 字节。内容是什么无所谓，测试只关心接口能不能正常返回。
+# A solid-color image encoded as JPEG bytes. Its content doesn't matter: the tests only
+# check that the API responds correctly.
 def make_image_bytes(color: tuple = (128, 64, 32), size: tuple = (32, 32)) -> bytes:
     img = Image.new("RGB", size, color=color)
     buf = io.BytesIO()
     img.save(buf, format="JPEG")
     return buf.getvalue()
 
-# 测试客户端。不理解这里？？？
+# Shared test client for all tests in this file (scope="module": created once). It saves a
+# randomly initialized model to a temporary folder, points serve.MODEL_PATH at it, and
+# starts the app with TestClient, so the tests don't need a trained model.
 @pytest.fixture(scope="module")
 def client(tmp_path_factory):
     model_path = create_dummy_model(tmp_path_factory.mktemp("model") / "model.pt")
@@ -33,7 +36,6 @@ def client(tmp_path_factory):
         with TestClient(app) as c:
             yield c
 
-# 以下为各个测试用例
 def test_root(client):
     response = client.get("/")
     assert response.status_code == 200

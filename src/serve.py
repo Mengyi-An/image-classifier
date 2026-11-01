@@ -1,14 +1,14 @@
 """
-把模型封装成一个 API 接口
-serve.py 把训练好的模型包装成一个 HTTP 接口，别人用浏览器或程序上传一张图片，就能拿到分类结果。先看整体，再逐段拆开
 Image classification API.
 
-5 interface totally:
-    GET  /health               检查服务是否就绪
-    GET  /classes              列出 10 个类别
-    GET  /classes/{name}       查某个类别的说明
-    POST /predict              对一张图片分类
-    POST /predict/batch        一次对多张图片分类
+Wraps the trained model in an HTTP service: upload an image and get its predicted class.
+
+Endpoints:
+    GET  /health               check that the service is ready
+    GET  /classes              list the 10 classes
+    GET  /classes/{name}       describe one class
+    POST /predict              classify one image
+    POST /predict/batch        classify several images at once
 """
 
 import io
@@ -18,16 +18,17 @@ from contextlib import asynccontextmanager
 import torch
 import torch.nn.functional as F
 from fastapi import FastAPI, File, HTTPException, Query, UploadFile
-from PIL import Image  # 把字节解码成图片
+from PIL import Image
 from torchvision import transforms
 
 from src.model import IMAGE_SIZE, NORM_MEAN, NORM_STD, ImageClassifier
 
-# 取已经训练好的模型，路径/data/model.pt
+# The trained model checkpoint: data/model.pt
 MODEL_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "model.pt")
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
-# 上传文件上限 10MB，批量接口一次最多 20 张。上传内容会整个读进内存，所以必须设上限，否则有人传一个几个 GB 的文件就能把服务撑垮。
+# Uploads are read fully into memory, so cap their size (10 MB per file, at most 20 files
+# per batch) to keep one huge request from taking the service down
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 MAX_BATCH_FILES = 20
 
@@ -35,7 +36,7 @@ model = None
 model_metadata = {}
 
 TRANSFORM = transforms.Compose([
-    transforms.Resize(IMAGE_SIZE), # 训练数据图片是 32*32，所以这里需要先 resize 一下用户上传的图片大小
+    transforms.Resize(IMAGE_SIZE),  # the model was trained on 32x32 images
     transforms.ToTensor(),
     transforms.Normalize(NORM_MEAN, NORM_STD),
 ])
@@ -59,7 +60,7 @@ def load_model():
     if not os.path.exists(MODEL_PATH):
         raise RuntimeError("Model not found. Run src/train.py first.")
 
-    # map_location=DEVICE 保证在 GPU 上训练的模型能加载到只有 CPU 的机器上
+    # map_location lets a model trained on a GPU load on a CPU-only machine
     checkpoint = torch.load(MODEL_PATH, map_location=DEVICE, weights_only=True)
 
     # train.py writes a bundle (weights + params + seed + metrics). Older
@@ -75,7 +76,6 @@ def load_model():
         state_dict = checkpoint
         model_metadata = {}
 
-    # 创建一个空结构的模型，权重是随机的
     m = ImageClassifier()
     m.load_state_dict(state_dict)
     m.eval()
@@ -92,9 +92,10 @@ def read_upload(file: UploadFile) -> bytes:
         )
     return contents
 
-# io.BytesIO 把字节包装成类似文件的对象，Image.open 才能读。
-# .convert("RGB") 统一成三通道，因为有些图片是灰度图或者带透明通道的 PNG，通道数不对会直接报错。
-# 解码失败就返回 400，表示客户端传来的东西不对。
+
+# Decode the bytes into an image and return the top-k predictions.
+# convert("RGB") handles grayscale images and PNGs with an alpha channel.
+# Anything that cannot be decoded is the client's fault, so it returns 400.
 def classify_image(image_bytes: bytes, top_k: int, min_confidence: float) -> dict:
     try:
         image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
@@ -107,19 +108,18 @@ def classify_image(image_bytes: bytes, top_k: int, min_confidence: float) -> dic
         logits = model(tensor)
         probs = F.softmax(logits, dim=1)[0]
 
-    # topk(k) 返回概率最大的 k 个值和它们的编号
+    # The k most likely classes and their probabilities
     top_prob, top_idx = probs.topk(top_k)
     top_predictions = [
         {"class": ImageClassifier.CLASSES[i], "probability": round(p, 4)}
-        for i, p in zip(top_idx.tolist(), top_prob.tolist()) # tolist() 把张量转成普通 Python 列表
+        for i, p in zip(top_idx.tolist(), top_prob.tolist())
     ]
 
-    # 取最有可能的类别和概率
     top_class = top_predictions[0]["class"]
     top_confidence = top_predictions[0]["probability"]
     confident = top_confidence >= min_confidence
 
-    # 如果第一名的概率不够高，prediction 就返回 "uncertain"
+    # Below the requested confidence, report "uncertain" instead of a class
     return {
         "prediction": top_class if confident else "uncertain",
         "confidence": top_confidence,
@@ -128,15 +128,14 @@ def classify_image(image_bytes: bytes, top_k: int, min_confidence: float) -> dic
     }
 
 
-# lifespan 管理应用的生命周期。服务启动时先执行 yield 之前的代码，也就是加载模型。
-# yield 之后可以写关闭时的清理，这里没有。这样模型只在启动时加载一次，之后所有请求共用同一个，不会每个请求都重新读文件。
-# async def 是异步函数，@asynccontextmanager 是装饰器，是 FastAPI 规定的写法，你现在不需要深究，知道它是启动时的钩子就够了。
+# Startup hook: the code before `yield` runs once when the service starts, so the model is
+# loaded a single time and shared by all requests instead of being re-read per request.
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     load_model()
     yield
 
-# FastAPI 应用实例
+
 app = FastAPI(
     title="Image Classifier API",
     description="Classifies images into CIFAR-10 categories using a custom CNN.",
@@ -144,14 +143,12 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# 返回一句欢迎信息，提醒去 /docs
+
 @app.get("/")
 def root():
     return {"message": "Image Classifier API is running. Visit /docs for usage."}
 
-# @app.get("/health") 是一个装饰器，意思是把下面这个函数登记为处理 GET /health 请求的函数。
-# 有人访问这个地址，FastAPI 就调用这个函数，把返回值转成 JSON 发回去。
-# @app.post 同理，对应 POST 请求。上传文件用 POST，查询信息用 GET，这是 HTTP 的惯例。
+
 @app.get("/health")
 def health():
     if model is None:
@@ -164,7 +161,7 @@ def get_classes():
     return {"classes": ImageClassifier.CLASSES}
 
 
-# 网址里的 {name} 是路径参数，访问 /classes/cat 时，name 就等于 "cat"，自动传给函数。不存在的类别返回 404
+# {name} is a path parameter: /classes/cat calls this with name="cat"
 @app.get("/classes/{name}")
 def get_class_info(name: str):
     if name not in CLASS_DESCRIPTIONS:
@@ -172,10 +169,8 @@ def get_class_info(name: str):
     return {"class": name, "description": CLASS_DESCRIPTIONS[name]}
 
 
-# 参数声明就是接口的说明书，FastAPI 会据此自动解析和校验。
-# file: UploadFile = File(...) 表示必须上传一个文件，... 在这里表示必填。
-# top_k 是网址里的查询参数，比如 /predict?top_k=5。ge=1, le=10 限制取值在 1 到 10 之间，超出范围 FastAPI 会自动返回 422 错误，不用你手写判断。
-# min_confidence 同理，限制在 0 到 1。
+# FastAPI validates the parameters from their declarations: the file is required, and
+# top_k / min_confidence outside their ranges get an automatic 422 response.
 @app.post("/predict")
 def predict(
     file: UploadFile = File(...),
