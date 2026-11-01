@@ -2,7 +2,7 @@
 CNN architecture for CIFAR-10 image classification.
 
 Input: 32x32 RGB images
-Output: 10 class probabilities
+Output: 10 class scores (logits)
 
 Architecture:
     Block 1: Conv(32) -> BN -> ReLU -> Conv(32) -> BN -> ReLU -> MaxPool -> Dropout
@@ -14,13 +14,10 @@ Architecture:
 import torch
 from torch import nn
 
-# image size
 IMAGE_SIZE = (32, 32)
 
-# 三个 channels RGB的均值
+# Per-channel (R, G, B) mean and standard deviation of the CIFAR-10 training set
 NORM_MEAN = (0.4914, 0.4822, 0.4465)
-
-# 三个通道的标准差
 NORM_STD = (0.2470, 0.2435, 0.2616)
 
 
@@ -29,12 +26,12 @@ class ConvBlock(nn.Module):
         super().__init__()
         self.block = nn.Sequential(
             nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1),
-            nn.BatchNorm2d(out_channels), # 让每一层的输入分布更稳定，训练更快
+            nn.BatchNorm2d(out_channels),  # stabilizes layer inputs and speeds up training
             nn.ReLU(inplace=True),
             nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1),
             nn.BatchNorm2d(out_channels),
             nn.ReLU(inplace=True),
-            nn.MaxPool2d(2), # 缩小特征图，减少后面的计算量
+            nn.MaxPool2d(2),  # halves the feature map size, reducing later computation
             nn.Dropout2d(dropout),
         )
 
@@ -44,13 +41,14 @@ class ConvBlock(nn.Module):
 
 class ImageClassifier(nn.Module):
 
-    # CIFAR10 数据集中共 10 个类别，0-9 分别表示这 10 个类别
+    # The 10 CIFAR-10 classes; label i corresponds to CLASSES[i]
     CLASSES = ["airplane", "automobile", "bird", "cat", "deer",
                "dog", "frog", "horse", "ship", "truck"]
 
-    # dropout 是全连接层的丢弃率，conv_dropout 是每个卷积块末尾的丢弃率。
-    # 两个都设成 0 就是"不用 dropout"（消融实验用）。dropout 层没有参数，
-    # 所以不管设成多少，保存的权重结构都一样，serve.py 用默认值加载也没问题
+    # dropout is the rate in the classifier, conv_dropout the rate at the end of each conv
+    # block. Setting both to 0 disables dropout (used in the comparison runs). Dropout layers
+    # have no weights, so the saved state_dict is the same for any rate, and serve.py can
+    # load any checkpoint with the default values.
     def __init__(self, num_classes: int = 10, dropout: float = 0.5, conv_dropout: float = 0.25):
         super().__init__()
         self.features = nn.Sequential(
@@ -59,16 +57,13 @@ class ImageClassifier(nn.Module):
             ConvBlock(64, 128, conv_dropout),
         )
 
-        # 这部分就是所谓的 fully connected
+        # Fully connected classifier head
         self.classifier = nn.Sequential(
-            # 把 feature map拉成一个向量
-            nn.Flatten(),
-
-            # 降维
+            nn.Flatten(),  # 128 feature maps of 4x4 -> one vector of 2048 values
             nn.Linear(128 * 4 * 4, 512),
             nn.ReLU(inplace=True),
             nn.Dropout(dropout),
-            nn.Linear(512, num_classes), # 模型的最终结果是未经过 normalize 的数据，而不是 proba
+            nn.Linear(512, num_classes),  # outputs raw logits, not probabilities
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
