@@ -11,6 +11,6 @@ data/cifar-10-python.tar.gz
 data/model.pt
 data/metrics.json
 .env
-data/ablation/
+data/comparison/
 mlflow.db
 .DS_Store
