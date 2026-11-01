@@ -14,7 +14,7 @@ Needs two extra packages that the API and training do not use:
 
 Usage:
     python -m src.export_onnx
-    python -m src.export_onnx --model data/ablation/no_augment/model.pt
+    python -m src.export_onnx --model data/comparison/no_augment/model.pt
 """
 
 import argparse
@@ -31,23 +31,24 @@ from src.train import DATA_DIR, EVAL_TRANSFORM
 
 DOCS_DIR = os.path.join(os.path.dirname(__file__), "..", "docs")
 DEFAULT_MODEL = os.path.join(DATA_DIR, "model.pt")
-CHECK_IMAGES = 1000   # 用测试集的前 1000 张图比较 PyTorch 和 ONNX 的结果
+CHECK_IMAGES = 1000   # compare PyTorch and ONNX on the first 1000 test images
 
 
 def load_model(model_path: str) -> tuple[ImageClassifier, dict]:
-    # 和 serve.py 一样，兼容"打包的 checkpoint"和"只有权重"两种格式
+    # Like serve.py, accept both a bundled checkpoint and a bare state_dict
     checkpoint = torch.load(model_path, map_location="cpu", weights_only=True)
     state_dict = checkpoint.get("state_dict", checkpoint)
     metrics = checkpoint.get("metrics", {})
 
     model = ImageClassifier()
     model.load_state_dict(state_dict)
-    model.eval()   # 导出前一定要切到 eval 模式，否则 dropout / BatchNorm 会按训练模式导出
+    model.eval()   # must export in eval mode, or dropout and BatchNorm keep training behavior
     return model, metrics
 
 
 def export(model: ImageClassifier, onnx_path: str) -> None:
-    # torch.onnx.export 会用一个示例输入把模型跑一遍，记录下所有计算步骤，存成 ONNX 文件
+    # torch.onnx.export runs the model once on a sample input and records every operation
+    # into an ONNX graph
     dummy = torch.zeros(1, 3, *IMAGE_SIZE)
     torch.onnx.export(
         model,
@@ -55,14 +56,15 @@ def export(model: ImageClassifier, onnx_path: str) -> None:
         onnx_path,
         input_names=["input"],
         output_names=["logits"],
-        # 第 0 维（batch 大小）设成可变的，这样一次可以预测一张，也可以预测多张
+        # A variable batch dimension, so one call can classify one image or many
         dynamic_axes={"input": {0: "batch"}, "logits": {0: "batch"}},
         opset_version=17,
     )
 
 
 def write_meta(metrics: dict, meta_path: str) -> None:
-    # 网页做预处理需要的信息都从这里读，不在 JavaScript 里再写一份，避免两边不一致
+    # The web page reads its preprocessing values from this file instead of hard-coding
+    # them in JavaScript, so the two can never drift apart
     meta = {
         "classes": ImageClassifier.CLASSES,
         "image_size": list(IMAGE_SIZE),
@@ -75,9 +77,9 @@ def write_meta(metrics: dict, meta_path: str) -> None:
 
 
 def save_samples(samples_dir: str) -> None:
-    # 每个类别取测试集里出现的第一张图，不挑选，所以示例里也可能有模型认错的
+    # The first test image of each class, not hand-picked, so some may be misclassified
     os.makedirs(samples_dir, exist_ok=True)
-    raw_test = datasets.CIFAR10(DATA_DIR, train=False, download=True)   # 不做 transform，拿到原始 PIL 图片
+    raw_test = datasets.CIFAR10(DATA_DIR, train=False, download=True)   # no transform: raw PIL images
     saved = set()
     for image, label in raw_test:
         name = ImageClassifier.CLASSES[label]
@@ -89,7 +91,7 @@ def save_samples(samples_dir: str) -> None:
 
 
 def check(model: ImageClassifier, onnx_path: str) -> None:
-    # 同一批图分别用 PyTorch 和 ONNX Runtime 预测，比较输出的数值和预测的类别
+    # Run the same images through PyTorch and ONNX Runtime and compare outputs and classes
     test_set = datasets.CIFAR10(DATA_DIR, train=False, download=True, transform=EVAL_TRANSFORM)
     images = torch.stack([test_set[i][0] for i in range(CHECK_IMAGES)])
 

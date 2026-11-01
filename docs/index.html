@@ -52,8 +52,8 @@
     }
     .card h2 { margin: 0 0 12px; font-size: 1rem; }
 
-    /* 示例图片：原图只有 32×32，放大显示时保持像素清晰 */
-    /* minmax(0, 1fr)：每列严格等宽，不会被 "automobile" 这种长名字撑宽 */
+    /* Example images are only 32x32, so they are upscaled with crisp pixels.
+       minmax(0, 1fr) keeps the columns equal even with long names like "automobile". */
     .samples { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; }
     .sample {
       padding: 0;
@@ -151,7 +151,7 @@
 
   <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.19.2/dist/ort.min.js"></script>
   <script>
-    // onnxruntime-web 的 wasm 文件从同一个 CDN 地址加载
+    // Load the onnxruntime-web WebAssembly files from the same CDN
     ort.env.wasm.wasmPaths = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.19.2/dist/";
   </script>
   <script src="app.js"></script>
@@ -183,7 +183,7 @@
       });
     }
 
-    // trueLabel 只有示例图片才有，用来显示模型这次是不是认对了
+    // trueLabel is set only for the example images, to show whether the prediction is right
     async function classify(src, trueLabel = null) {
       if (!ready) return;
       try {
@@ -227,7 +227,7 @@
       for (const name of classes) {
         const button = document.createElement("button");
         button.className = "sample";
-        button.title = name;   // 手机上长名字会被截断，鼠标悬停时显示完整名字
+        button.title = name;   // long names are cut off on phones; show the full name on hover
         button.disabled = true;
         button.innerHTML = `<img alt=""><span></span>`;
         button.querySelector("img").src = `samples/${name}.png`;
