@@ -70,6 +70,18 @@ python -m src.plot                   # -> figures/comparison.png
 
 CIFAR-10 is downloaded automatically on the first run. Trained weights are not committed to the repository.
 
+**No GPU?** Training 100 epochs on a CPU is slow, so you can run it on [Google Colab](https://colab.research.google.com/) with a free GPU (Runtime → Change runtime type → T4 GPU). Clone the project into Google Drive so the results are kept after the session ends:
+
+```python
+from google.colab import drive
+drive.mount('/content/drive')
+%cd /content/drive/MyDrive
+!git clone https://github.com/Mengyi-An/image-classifier.git
+%cd /content/drive/MyDrive/image-classifier
+!pip install -q mlflow     # Colab already has PyTorch with GPU support
+!python -m src.train
+```
+
 Export a trained model for the browser demo (needs `pip install onnx==1.17.0 onnxruntime`):
 
 ```bash
