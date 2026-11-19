@@ -3,7 +3,7 @@
 // The page (index.html) only calls Classifier.load() and Classifier.predict().
 const Classifier = (() => {
   let session = null;
-  let meta = null;   // model_meta.json: class names, image size, normalization mean/std (written by src/export_onnx.py)
+  let meta = null;   // model_meta.json: class names, image size, normalization mean/std (written by src/export_demo.py)
 
   async function load() {
     meta = await (await fetch("model_meta.json")).json();

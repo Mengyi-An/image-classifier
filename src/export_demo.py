@@ -6,15 +6,9 @@ Writes:
     docs/model_meta.json   class names and normalization values the web page needs for preprocessing
     docs/samples/*.png     the first test image of each class, used as clickable examples
 
-Then checks that ONNX Runtime gives the same predictions as PyTorch on the test set.
-
-Needs two extra packages that training does not use:
-    pip install onnx==1.17.0 onnxruntime
-(newer onnx versions need protobuf>=6, which conflicts with mlflow 2.13)
-
 Usage:
-    python -m src.export_onnx
-    python -m src.export_onnx --model data/comparison/no_augment/model.pt
+    python -m src.export_demo
+    python -m src.export_demo --model data/comparison/no_augment/model.pt
 """
 
 import argparse
