@@ -2,9 +2,6 @@ venv/
 .venv/
 __pycache__/
 *.pyc
-.pytest_cache/
-.coverage
-htmlcov/
 mlruns/
 data/cifar-10-batches-py/
 data/cifar-10-python.tar.gz
@@ -14,3 +11,4 @@ data/metrics.json
 data/comparison/
 mlflow.db
 .DS_Store
+.vscode/

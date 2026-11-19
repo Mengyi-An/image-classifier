@@ -47,7 +47,7 @@ class ImageClassifier(nn.Module):
 
     # dropout is the rate in the classifier, conv_dropout the rate at the end of each conv
     # block. Setting both to 0 disables dropout (used in the comparison runs). Dropout layers
-    # have no weights, so the saved state_dict is the same for any rate, and serve.py can
+    # have no weights, so the saved state_dict is the same for any rate, and export_onnx.py can
     # load any checkpoint with the default values.
     def __init__(self, num_classes: int = 10, dropout: float = 0.5, conv_dropout: float = 0.25):
         super().__init__()

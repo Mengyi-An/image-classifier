@@ -134,7 +134,7 @@ def evaluate(model: nn.Module, loader, criterion):
 
 # Save the model together with how it was trained and how well it did.
 # out_dir is data/ for the baseline and data/comparison/<run name>/ for comparison runs,
-# so they never overwrite data/model.pt, which serve.py loads.
+# so they never overwrite the baseline data/model.pt.
 def save_checkpoint(
     model: nn.Module, params: dict, seed: int, metrics: dict, out_dir: str = DATA_DIR
 ) -> None:
@@ -316,7 +316,7 @@ if __name__ == "__main__":
                                       ("no_dropout", args.dropout)] if not on]
     run_name = args.run_name or "_".join(disabled) or "baseline"
 
-    # The baseline goes to data/ (where serve.py looks); comparison runs go to
+    # The baseline goes to data/; comparison runs go to
     # data/comparison/<run name>/
     out_dir = args.out_dir or (
         DATA_DIR if run_name == "baseline" else os.path.join(DATA_DIR, "comparison", run_name)

@@ -8,7 +8,7 @@ Writes:
 
 Then checks that ONNX Runtime gives the same predictions as PyTorch on the test set.
 
-Needs two extra packages that the API and training do not use:
+Needs two extra packages that training does not use:
     pip install onnx==1.17.0 onnxruntime
 (newer onnx versions need protobuf>=6, which conflicts with mlflow 2.13)
 
@@ -35,13 +35,12 @@ CHECK_IMAGES = 1000   # compare PyTorch and ONNX on the first 1000 test images
 
 
 def load_model(model_path: str) -> tuple[ImageClassifier, dict]:
-    # Like serve.py, accept both a bundled checkpoint and a bare state_dict
+    # train.py saves the weights together with params and metrics in one checkpoint
     checkpoint = torch.load(model_path, map_location="cpu", weights_only=True)
-    state_dict = checkpoint.get("state_dict", checkpoint)
-    metrics = checkpoint.get("metrics", {})
+    metrics = checkpoint["metrics"]
 
     model = ImageClassifier()
-    model.load_state_dict(state_dict)
+    model.load_state_dict(checkpoint["state_dict"])
     model.eval()   # must export in eval mode, or dropout and BatchNorm keep training behavior
     return model, metrics
 

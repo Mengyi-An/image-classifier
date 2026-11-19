@@ -1,6 +1,6 @@
 # CIFAR-10 Image Classifier
 
-An end-to-end deep learning project in PyTorch: a CNN trained from scratch on CIFAR-10, comparison experiments on regularization, a FastAPI service, and an in-browser demo.
+An end-to-end deep learning project in PyTorch: a CNN trained from scratch on CIFAR-10, comparison experiments on regularization, and an in-browser demo.
 
 ## Live Demo
 
@@ -18,8 +18,8 @@ Note: the model was trained on small 32×32 images of 10 classes (airplane, auto
 - **Model and training:** a custom CNN (`nn.Module`) with batch normalization and dropout, trained with a hand-written training loop, Adam, weight decay and cosine learning rate scheduling
 - **Experiment tracking:** hyperparameters and per-epoch metrics logged with MLflow; the best epoch is chosen on the validation set and the test set is used only once
 - **Comparison experiments:** a baseline and two comparison runs (without data augmentation, without dropout)
-- **Deployment:** a FastAPI REST service (Docker) and an ONNX export that runs in the browser, hosted on GitHub Pages
-- **Engineering:** fixed random seeds for reproducible runs, pytest tests, and GitHub Actions CI
+- **Deployment:** an ONNX export that runs in the browser, hosted on GitHub Pages
+- **Engineering:** fixed random seeds for reproducible runs, and linting with ruff in GitHub Actions CI
 
 ## Results
 
@@ -44,10 +44,8 @@ src/
   model.py         CNN architecture
   train.py         training, evaluation and MLflow logging
   plot.py          learning curves of several runs side by side, plus a summary table
-  serve.py         FastAPI service
   export_onnx.py   export to ONNX for the browser demo, with a check against PyTorch
 docs/              the browser demo (GitHub Pages)
-tests/             API tests
 figures/           result plots
 ```
 
@@ -87,35 +85,6 @@ Export a trained model for the browser demo (needs `pip install onnx==1.17.0 onn
 ```bash
 python -m src.export_onnx --model data/model.pt
 ```
-
-Start the API locally:
-
-```bash
-uvicorn src.serve:app --reload        # API docs at http://localhost:8000/docs
-```
-
-Or with Docker (the model is mounted at runtime):
-
-```bash
-docker build -t image-classifier .
-docker run -p 8000:8000 -v "$(pwd)/data:/app/data" image-classifier
-```
-
-Run the tests:
-
-```bash
-pytest tests/
-```
-
-## API Endpoints
-
-| Method | Path | Description |
-|---|---|---|
-| GET | `/health` | check that the service is ready |
-| GET | `/classes` | list the 10 classes |
-| GET | `/classes/{name}` | describe one class |
-| POST | `/predict` | classify one image (`top_k`, `min_confidence` optional) |
-| POST | `/predict/batch` | classify up to 20 images |
 
 ## License
 

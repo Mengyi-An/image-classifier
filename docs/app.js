@@ -13,7 +13,7 @@ const Classifier = (() => {
 
   // Must match EVAL_TRANSFORM in training exactly; a mismatch raises no error, the model
   // just silently predicts wrong:
-  //   1. Resize to 32x32 (stretched like serve.py's Resize, aspect ratio not kept)
+  //   1. Resize to 32x32 (stretched, aspect ratio not kept)
   //   2. Scale pixel values from 0-255 to 0-1
   //   3. Subtract the mean and divide by the std, per channel
   //   4. Reorder from the browser's height x width x RGBA to PyTorch's channel x height x width
