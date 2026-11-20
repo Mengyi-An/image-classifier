@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>CIFAR-10 Image Classifier</title>
-  <meta name="description" content="A small PyTorch CNN that classifies images into 10 CIFAR-10 classes, running entirely in your browser with ONNX Runtime Web.">
+  <title>Image Classifier and Search</title>
+  <meta name="description" content="Two in-browser demos: a small PyTorch CNN that classifies images into 10 CIFAR-10 classes, and CLIP text-to-image and image-to-image search over COCO photos.">
   <style>
     :root {
       --bg: #f6f7f9;
@@ -112,16 +112,85 @@
     footer { margin-top: 24px; color: var(--muted); font-size: 0.9rem; }
     footer p { margin: 6px 0; }
     a { color: var(--accent); }
+
+    /* Tabs: 1 = classifier (unchanged), 2 = CLIP image search */
+    .tabs { display: flex; gap: 4px; margin-top: 20px; border-bottom: 1px solid var(--border); }
+    .tab {
+      margin-bottom: -1px;
+      padding: 8px 14px;
+      border: none;
+      border-bottom: 2px solid transparent;
+      background: none;
+      color: var(--muted);
+      font: inherit;
+      cursor: pointer;
+    }
+    .tab[aria-selected="true"] { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
+    [hidden] { display: none !important; }
+
+    /* Image search tab */
+    .tab-intro { margin: 24px 0 0; color: var(--muted); }
+    .search-layout { display: grid; gap: 20px; margin-top: 20px; }
+    .search-form { display: flex; gap: 8px; }
+    .search-form input {
+      flex: 1;
+      min-width: 0;
+      padding: 10px 12px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--bg);
+      color: var(--text);
+      font: inherit;
+    }
+    .search-form button {
+      padding: 10px 18px;
+      border: none;
+      border-radius: 8px;
+      background: var(--accent);
+      color: #fff;
+      font: inherit;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .search-form input:disabled, .search-form button:disabled { cursor: wait; opacity: 0.5; }
+    .query { display: flex; gap: 16px; align-items: center; margin-bottom: 16px; min-height: 1.5em; }
+    .query img { width: 140px; max-height: 140px; object-fit: contain; border-radius: 8px; background: var(--bar-bg); }
+    .query .title { font-weight: 600; }
+    .query .caption { color: var(--muted); font-size: 0.9rem; }
+    .results { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 12px; }
+    .result {
+      padding: 0;
+      border: 2px solid transparent;
+      border-radius: 8px;
+      background: none;
+      color: var(--muted);
+      font: inherit;
+      font-size: 0.75rem;
+      text-align: left;
+      cursor: pointer;
+    }
+    .result:hover { border-color: var(--accent); }
+    .result img { display: block; width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 6px; background: var(--bar-bg); }
+    .result span { display: block; padding: 2px 4px; font-variant-numeric: tabular-nums; }
+    .empty { color: var(--muted); }
   </style>
 </head>
 <body>
   <main>
     <header>
-      <h1>CIFAR-10 Image Classifier</h1>
-      <p>A small convolutional network trained in PyTorch, running entirely in your browser with ONNX Runtime Web.
-        <span id="accuracy"></span></p>
+      <h1>Image Classifier and Search</h1>
+      <p>Two demos that run entirely in your browser: classify an image with a CNN trained from scratch,
+        or search photos with words or images using CLIP.</p>
     </header>
 
+    <nav class="tabs" role="tablist">
+      <button class="tab" role="tab" id="tab-button-classify" aria-selected="true" aria-controls="tab-classify">Classify</button>
+      <button class="tab" role="tab" id="tab-button-search" aria-selected="false" aria-controls="tab-search">Image search</button>
+    </nav>
+
+    <div id="tab-classify" role="tabpanel">
+    <p class="tab-intro">A small convolutional network trained in PyTorch on CIFAR-10, running in your browser with ONNX Runtime Web.
+      <span id="accuracy"></span></p>
     <div class="layout">
       <section class="card">
         <h2>Try an example from the test set</h2>
@@ -147,6 +216,40 @@
         so it works best on small, centered pictures of those classes. High-resolution photos are shrunk to 32×32 and may be misclassified.</p>
       <p>Your image never leaves your browser. Source code: <a href="https://github.com/Mengyi-An/image-classifier">github.com/Mengyi-An/image-classifier</a></p>
     </footer>
+    </div>
+
+    <div id="tab-search" role="tabpanel" hidden>
+      <p class="tab-intro">Search 1,000 photos from COCO with words or with an image of your own.
+        CLIP turns both texts and images into vectors in the same space, so the closest vectors are the best matches.
+        Click any result to see similar photos.</p>
+
+      <div class="search-layout">
+        <section class="card">
+          <form class="search-form" id="search-form">
+            <input type="text" id="search-text" placeholder="Describe a photo, e.g. a dog on the beach" disabled>
+            <button type="submit" id="search-button" disabled>Search</button>
+          </form>
+
+          <label class="dropzone" id="search-dropzone">
+            <input type="file" id="search-file" accept="image/*" disabled>
+            <strong>Upload an image</strong> or drag it here to find similar photos
+          </label>
+          <p class="status" id="search-status">Open this tab to load the search model.</p>
+        </section>
+
+        <section class="card">
+          <div class="query" id="search-query"></div>
+          <div class="results" id="search-results"><p class="empty">Results will appear here.</p></div>
+        </section>
+      </div>
+
+      <footer>
+        <p>The model is <a href="https://huggingface.co/openai/clip-vit-base-patch32">CLIP ViT-B/32</a>, running in your browser with Transformers.js.
+          The first search downloads it (about 65 MB, plus 90 MB for image uploads); later visits use the browser cache.
+          Photos: <a href="https://cocodataset.org">COCO 2017</a> validation set.</p>
+        <p>Your image never leaves your browser. Embedding and evaluation code: <a href="https://github.com/Mengyi-An/image-search">github.com/Mengyi-An/image-search</a></p>
+      </footer>
+    </div>
   </main>
 
   <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.19.2/dist/ort.min.js"></script>
@@ -273,6 +376,174 @@
         setStatus("Model loaded. Pick an example or upload your own image.");
       })
       .catch((err) => setStatus(`Could not load the model: ${err.message}`, true));
+  </script>
+
+  <script src="search.js"></script>
+  <script>
+    // Tabs and the image search tab. Wrapped in a function so its names
+    // do not clash with the classifier script above.
+    (() => {
+      const RESULTS = 12;
+      const tabs = {
+        classify: { button: document.getElementById("tab-button-classify"), panel: document.getElementById("tab-classify") },
+        search: { button: document.getElementById("tab-button-search"), panel: document.getElementById("tab-search") },
+      };
+      const ui = {
+        form: document.getElementById("search-form"),
+        text: document.getElementById("search-text"),
+        button: document.getElementById("search-button"),
+        dropzone: document.getElementById("search-dropzone"),
+        file: document.getElementById("search-file"),
+        status: document.getElementById("search-status"),
+        query: document.getElementById("search-query"),
+        results: document.getElementById("search-results"),
+      };
+      let loading = null;   // the promise of ImageSearch.load(), so it only starts once
+      let busy = false;
+
+      function setStatus(text, isError = false) {
+        ui.status.textContent = text;
+        ui.status.classList.toggle("error", isError);
+      }
+
+      // ---------- tabs ----------
+      function showTab(name) {
+        for (const key in tabs) {
+          const selected = key === name;
+          tabs[key].button.setAttribute("aria-selected", String(selected));
+          tabs[key].panel.hidden = !selected;
+        }
+        // #search in the address bar opens the search tab directly
+        history.replaceState(null, "", name === "search" ? "#search" : location.pathname);
+        if (name === "search") startLoading();
+      }
+      tabs.classify.button.addEventListener("click", () => showTab("classify"));
+      tabs.search.button.addEventListener("click", () => showTab("search"));
+
+      // ---------- loading (only when the tab is opened) ----------
+      function startLoading() {
+        if (loading) return;
+        loading = ImageSearch.load((text) => setStatus(text))
+          .then(() => {
+            ui.text.disabled = false;
+            ui.button.disabled = false;
+            ui.file.disabled = false;
+            ui.text.focus();
+            setStatus("Ready. Type a description or upload an image.");
+          })
+          .catch((err) => {
+            loading = null;   // allow another try by reopening the tab
+            setStatus(`Could not load the search model: ${err.message}`, true);
+          });
+      }
+
+      // ---------- showing results ----------
+      function showQuery(title, imageUrl = null, captionText = null) {
+        ui.query.replaceChildren();
+        if (imageUrl) {
+          const img = document.createElement("img");
+          img.src = imageUrl;
+          img.alt = captionText || "query image";
+          ui.query.append(img);
+        }
+        const textBox = document.createElement("div");
+        const titleEl = document.createElement("div");
+        titleEl.className = "title";
+        titleEl.textContent = title;
+        textBox.append(titleEl);
+        if (captionText) {
+          const captionEl = document.createElement("div");
+          captionEl.className = "caption";
+          captionEl.textContent = captionText;
+          textBox.append(captionEl);
+        }
+        ui.query.append(textBox);
+      }
+
+      function showResults(matches) {
+        const items = [];
+        for (const match of matches) {
+          const button = document.createElement("button");
+          button.className = "result";
+          const captionText = ImageSearch.caption(match.index);
+          button.title = captionText;
+          const img = document.createElement("img");
+          img.src = ImageSearch.thumbUrl(match.index);
+          img.alt = captionText;
+          img.loading = "lazy";
+          const score = document.createElement("span");
+          score.textContent = `similarity ${match.score.toFixed(2)}`;
+          button.append(img, score);
+          button.addEventListener("click", () => showSimilar(match.index));
+          items.push(button);
+        }
+        ui.results.replaceChildren(...items);
+      }
+
+      // ---------- the three kinds of search ----------
+      async function runSearch(task) {
+        if (busy) return;
+        busy = true;
+        try {
+          await task();
+          setStatus("");
+        } catch (err) {
+          setStatus(err.message, true);
+        } finally {
+          busy = false;
+        }
+      }
+
+      // 1. text -> images
+      ui.form.addEventListener("submit", (event) => {
+        event.preventDefault();
+        const text = ui.text.value.trim();
+        if (!text) return;
+        runSearch(async () => {
+          setStatus("Searching…");
+          const matches = await ImageSearch.searchByText(text, RESULTS);
+          showQuery(`Photos matching "${text}"`);
+          showResults(matches);
+        });
+      });
+
+      // 2. uploaded image -> similar images (the image model is downloaded on the first upload)
+      function handleFile(file) {
+        if (!file || ui.file.disabled) return;
+        if (!file.type.startsWith("image/")) {
+          setStatus("Please choose an image file.", true);
+          return;
+        }
+        const url = URL.createObjectURL(file);
+        runSearch(async () => {
+          await ImageSearch.loadVision((text) => setStatus(text));
+          setStatus("Searching…");
+          const matches = await ImageSearch.searchByImage(url, RESULTS);
+          showQuery("Photos similar to your image", url);
+          showResults(matches);
+        });
+      }
+      ui.file.addEventListener("change", () => handleFile(ui.file.files[0]));
+      ["dragenter", "dragover"].forEach((type) => ui.dropzone.addEventListener(type, (e) => {
+        e.preventDefault();
+        ui.dropzone.classList.add("dragover");
+      }));
+      ["dragleave", "drop"].forEach((type) => ui.dropzone.addEventListener(type, (e) => {
+        e.preventDefault();
+        ui.dropzone.classList.remove("dragover");
+      }));
+      ui.dropzone.addEventListener("drop", (e) => handleFile(e.dataTransfer.files[0]));
+
+      // 3. clicked result -> similar images (uses the stored vectors, no model needed)
+      function showSimilar(index) {
+        const matches = ImageSearch.similarTo(index, RESULTS);
+        showQuery("Photos similar to this one", ImageSearch.thumbUrl(index), ImageSearch.caption(index));
+        showResults(matches);
+        ui.query.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      }
+
+      if (location.hash === "#search") showTab("search");
+    })();
   </script>
 </body>
 </html>
