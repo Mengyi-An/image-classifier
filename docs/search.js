@@ -1,7 +1,7 @@
 // In-browser image search with CLIP (the "Image search" tab).
 // Files in search/ are written by the image-search project (src/export_demo.py):
-//   search/meta.json    model name, vector size, first caption of each image
-//   search/embeds.bin   CLIP vector of each image, count x dim float32, row by row
+//   search/meta.json    model name, vector size, image mean, text mean, first caption of each image
+//   search/embeds.bin   centered CLIP vector of each image, count x dim float32, row by row
 //   search/thumbs/i.jpg small copy of image i
 // The page (index.html) only calls the functions returned at the bottom.
 const ImageSearch = (() => {
@@ -24,6 +24,15 @@ const ImageSearch = (() => {
     const result = new Float32Array(vector.length);
     for (let i = 0; i < vector.length; i++) result[i] = vector[i] / length;
     return result;
+  }
+
+  // Centering, the same as center() in the image-search project: subtract the mean
+  // (text mean for texts, image mean for images), then normalize again.
+  // It keeps a few "hub" photos from showing up in almost every search.
+  function center(vector, mean) {
+    const shifted = new Float32Array(vector.length);
+    for (let i = 0; i < vector.length; i++) shifted[i] = vector[i] - mean[i];
+    return normalize(shifted);
   }
 
   // Download progress of the model files, reported as "text model 42%"
@@ -67,14 +76,14 @@ const ImageSearch = (() => {
   async function encodeText(text) {
     const inputs = tokenizer([text], { padding: true, truncation: true });
     const output = await textModel(inputs);
-    return normalize(output.text_embeds.data);
+    return center(normalize(output.text_embeds.data), meta.text_mean);
   }
 
   async function encodeImage(url) {
     const image = await transformers.RawImage.fromURL(url);
     const inputs = await processor(image);
     const output = await visionModel(inputs);
-    return normalize(output.image_embeds.data);
+    return center(normalize(output.image_embeds.data), meta.image_mean);
   }
 
   // Compare a query vector with every image vector and return the k best:
