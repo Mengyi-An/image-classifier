@@ -6,6 +6,8 @@ A CNN trained from scratch on CIFAR-10 with PyTorch, with comparison experiments
 
 Pick an example image or upload your own to see the top-3 predictions. The model runs in your browser with ONNX Runtime Web, so no server is needed. It was trained on 32×32 images of 10 classes and works best on simple, centered pictures.
 
+The page also has an **Image search** tab ([open it directly](https://mengyi-an.github.io/image-classifier/#search)): search 5,000 COCO photos with words or with your own image, using CLIP in the browser. It comes from a separate project, [image-search](https://github.com/Mengyi-An/image-search), which computes the image vectors and evaluates the search; this repository only hosts the page (`docs/search.js` and `docs/search/`).
+
 ## Features
 
 - Custom CNN with batch normalization, trained with a hand-written PyTorch loop
@@ -37,6 +39,7 @@ src/
   plot.py          learning curves of several runs side by side, plus a summary table
   export_demo.py   export to ONNX for the browser demo, with a check against PyTorch
 docs/              the browser demo (GitHub Pages)
+  search.js, search/   the image search tab, exported by the image-search project
 figures/           result plots
 ```
 
