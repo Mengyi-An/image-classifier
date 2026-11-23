@@ -1,12 +1,12 @@
 # CIFAR-10 Image Classifier
 
-A small CNN trained from scratch on CIFAR-10 with PyTorch. I built it to learn the full workflow, from writing the training loop by hand to comparing settings and putting the model online.
+A CNN trained from scratch on CIFAR-10 with PyTorch, with comparison experiments and an in-browser demo.
 
 **Live demo: https://mengyi-an.github.io/image-classifier/**
 
-Pick an example image or upload your own to see the top 3 predictions. The model runs in your browser with ONNX Runtime Web, so there is no server behind it. It was trained on 32×32 images of 10 classes, so it works best on simple, centered pictures.
+Try one of the example images or upload your own, and the page will show the three most likely classes. Everything runs in your browser with ONNX Runtime Web. The model only knows 10 classes and was trained on tiny 32×32 images, so clear, centered photos work best.
 
-The page also has an Image search tab ([open it directly](https://mengyi-an.github.io/image-classifier/#search)), where you can search 5,000 COCO photos with words or with your own image, using CLIP in the browser. It comes from a separate project, [image-search](https://github.com/Mengyi-An/image-search), which computes the image vectors and evaluates the search. This repository only hosts the page (`docs/search.js` and `docs/search/`).
+The demo also has an [image search tab](https://mengyi-an.github.io/image-classifier/#search) that uses CLIP to search 5,000 COCO photos by text or by image. That part is built in my [image-search](https://github.com/Mengyi-An/image-search) project, and this repo just hosts its files in `docs/search.js` and `docs/search/`.
 
 ## Results
 
